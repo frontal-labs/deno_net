@@ -1,0 +1,46 @@
+# Copyright 2018-2026 the Deno authors. MIT license.
+# Standalone copy of ext/net from denoland/deno v2.9.7, with the workspace
+# dependency versions pinned explicitly. See NOTICE.md.
+
+[package]
+name = "deno_net"
+version = "0.251.0"
+authors = ["the Deno authors"]
+edition = "2024"
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/frontal-labs/deno_net"
+description = "Networking for Deno (Frontal Labs fork)"
+
+[lib]
+path = "lib.rs"
+
+[dependencies]
+deno_core = "0.412.0"
+deno_error = "=0.7.1"
+deno_features = "0.56.0"
+deno_permissions = "0.118.0"
+deno_signals = "0.50.0"
+deno_tls = "0.246.0"
+deno_tunnel = "0.8.1"
+hickory-proto = "0.25.2"
+hickory-resolver = { version = "0.25.2", features = ["tokio", "serde"] }
+libc = "0.2.168"
+log = { version = "0.4.28", features = ["kv"] }
+pin-project = "1.0.11"
+quinn = { version = "0.11.8", default-features = false, features = ["runtime-tokio", "rustls-aws-lc-rs"] }
+rustls-tokio-stream = "=0.8.0"
+serde = { version = "1.0.149", features = ["derive"] }
+sha2 = { version = "0.10.8", features = ["oid"] }
+socket2 = { version = "0.5.3", features = ["all"] }
+thiserror = "2.0.12"
+tokio = { version = "1.47.1", features = ["full"] }
+url = { version = "2.5", features = ["serde", "expose_internals"] }
+web-transport-proto = "0.2.7"
+x509-parser = "0.15.0"
+
+[target.'cfg(any(target_os = "android", target_os = "linux", target_os = "macos"))'.dependencies]
+tokio-vsock = "0.7"
+
+[dev-dependencies]
+sys_traits = { version = "0.1.28", features = ["real", "libc"] }
