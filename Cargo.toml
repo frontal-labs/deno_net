@@ -23,8 +23,8 @@ deno_permissions = "0.118.0"
 deno_signals = "0.50.0"
 deno_tls = "0.246.0"
 deno_tunnel = "0.8.1"
-hickory-proto = "0.25.2"
-hickory-resolver = { version = "0.25.2", features = ["tokio", "serde"] }
+hickory-proto = "0.26.3"
+hickory-resolver = { version = "0.26.2", features = ["tokio", "serde"] }
 libc = "0.2.168"
 log = { version = "0.4.28", features = ["kv"] }
 pin-project = "1.0.11"
@@ -38,6 +38,7 @@ tokio = { version = "1.47.1", features = ["full"] }
 url = { version = "2.5", features = ["serde", "expose_internals"] }
 web-transport-proto = "0.2.7"
 x509-parser = "0.15.0"
+resolv-conf = { version = "0.7.0", features = ["system"] }
 
 [target.'cfg(any(target_os = "android", target_os = "linux", target_os = "macos"))'.dependencies]
 tokio-vsock = "0.7"

@@ -23,20 +23,18 @@ use deno_core::ResourceId;
 use deno_core::ToV8;
 use deno_core::op2;
 use deno_permissions::PermissionsContainer;
-use hickory_proto::ProtoError;
-use hickory_proto::ProtoErrorKind;
 use hickory_proto::op::ResponseCode;
 use hickory_proto::rr::Name;
 use hickory_proto::rr::Record;
-use hickory_proto::rr::record_data::RData;
-use hickory_proto::rr::record_type::RecordType;
-use hickory_resolver::ResolveError;
-use hickory_resolver::ResolveErrorKind;
-use hickory_resolver::config::NameServerConfigGroup;
+use hickory_proto::rr::RData;
+use hickory_proto::rr::RecordType;
+use hickory_resolver::net::NetError as HickoryError;
+use hickory_resolver::net::DnsError;
+use hickory_resolver::config::NameServerConfig;
 use hickory_resolver::config::ResolverConfig;
 use hickory_resolver::config::ResolverOpts;
-use hickory_resolver::name_server::TokioConnectionProvider;
-use hickory_resolver::system_conf;
+use hickory_resolver::net::runtime::TokioRuntimeProvider;
+use crate::system_conf;
 use quinn::rustls;
 use serde::Deserialize;
 use serde::Serialize;
@@ -154,17 +152,17 @@ pub enum NetError {
   #[class("NotFound")]
   #[error("{0}")]
   #[property("ares_code" = self.ares_code())]
-  DnsNotFound(ResolveError),
+  DnsNotFound(HickoryError),
   #[class("NotConnected")]
   #[error("{0}")]
-  DnsNotConnected(ResolveError),
+  DnsNotConnected(HickoryError),
   #[class("TimedOut")]
   #[error("{0}")]
-  DnsTimedOut(ResolveError),
+  DnsTimedOut(HickoryError),
   #[class(generic)]
   #[error("{0}")]
   #[property("ares_code" = self.ares_code())]
-  Dns(#[from] ResolveError),
+  Dns(#[from] HickoryError),
   #[class(type)]
   #[error("Invalid DNS query name: '{0}'")]
   #[property("ares_code" = self.ares_code())]
@@ -224,21 +222,18 @@ impl NetError {
       _ => return "",
     };
 
-    match resolve_err.kind() {
+    match resolve_err {
       // No records found: distinguish between a non-existent domain
       // (`NXDOMAIN` -> `ENOTFOUND`) and an existing domain that simply has no
       // records of the requested type (`NoError` -> `ENODATA`), matching
       // c-ares/Node.js.
-      ResolveErrorKind::Proto(ProtoError { kind, .. }) => match &**kind {
-        ProtoErrorKind::NoRecordsFound { response_code, .. } => {
-          if *response_code == ResponseCode::NXDomain {
-            "ENOTFOUND"
-          } else {
-            "ENODATA"
-          }
+      HickoryError::Dns(DnsError::NoRecordsFound(no_records)) => {
+        if no_records.response_code == ResponseCode::NXDomain {
+          "ENOTFOUND"
+        } else {
+          "ENODATA"
         }
-        _ => "",
-      },
+      }
       _ => "",
     }
   }
@@ -1145,12 +1140,12 @@ pub async fn op_dns_resolve(
   let (config, mut opts) = if let Some(name_server) =
     options.as_ref().and_then(|o| o.name_server.as_ref())
   {
-    let group = NameServerConfigGroup::from_ips_clear(
-      &[name_server.ip_addr.parse()?],
-      name_server.port,
-      true,
-    );
-    (ResolverConfig::from_parts(None, vec![], group), {
+    // Plain UDP and TCP to the given server, both on the requested port.
+    let mut ns = NameServerConfig::udp_and_tcp(name_server.ip_addr.parse()?);
+    for connection in &mut ns.connections {
+      connection.port = name_server.port;
+    }
+    (ResolverConfig::from_name_servers(vec![ns]), {
       let mut opts = ResolverOpts::default();
       if use_edns {
         opts.edns0 = true;
@@ -1173,20 +1168,20 @@ pub async fn op_dns_resolve(
     let mut s = state.borrow_mut();
     let perm = s.borrow_mut::<PermissionsContainer>();
 
-    // Checks permission against the name servers which will be actually queried.
+    // Checks permission against every endpoint that will actually be queried.
     for ns in config.name_servers() {
-      let socker_addr = &ns.socket_addr;
-      let ip = socker_addr.ip().to_string();
-      let port = socker_addr.port();
-      perm.check_net(&(&ip, Some(port)), "Deno.resolveDns()")?;
+      let ip = ns.ip.to_string();
+      for connection in &ns.connections {
+        perm.check_net(&(&ip, Some(connection.port)), "Deno.resolveDns()")?;
+      }
     }
   }
 
-  let provider = TokioConnectionProvider::default();
+  let provider = TokioRuntimeProvider::default();
   let resolver =
     hickory_resolver::Resolver::builder_with_config(config, provider)
       .with_options(opts)
-      .build();
+      .build()?;
 
   let lookup_fut = resolver.lookup(name, record_type);
 
@@ -1212,26 +1207,19 @@ pub async fn op_dns_resolve(
     lookup_fut.await
   };
 
-  let lookup = lookup.map_err(|e| match e.kind() {
-    ResolveErrorKind::Proto(ProtoError { kind, .. })
-      if matches!(**kind, ProtoErrorKind::NoRecordsFound { .. }) =>
-    {
+  let lookup = lookup.map_err(|e| {
+    if matches!(e, HickoryError::Dns(DnsError::NoRecordsFound(_))) {
       NetError::DnsNotFound(e)
-    }
-    ResolveErrorKind::Proto(ProtoError { kind, .. })
-      if matches!(**kind, ProtoErrorKind::NoConnections) =>
-    {
+    } else if matches!(e, HickoryError::NoConnections) {
       NetError::DnsNotConnected(e)
-    }
-    ResolveErrorKind::Proto(ProtoError { kind, .. })
-      if matches!(**kind, ProtoErrorKind::Timeout) =>
-    {
+    } else if matches!(e, HickoryError::Timeout) {
       NetError::DnsTimedOut(e)
+    } else {
+      NetError::Dns(e)
     }
-    _ => NetError::Dns(e),
   })?;
 
-  format_dns_records(lookup.records(), record_type)
+  format_dns_records(lookup.answers(), record_type)
 }
 
 fn format_dns_records<'a>(
@@ -1248,7 +1236,7 @@ fn format_dns_records<'a>(
       } else {
         record_type
       };
-      let r = match format_rdata(effective_type)(rec.data()) {
+      let r = match format_rdata(effective_type)(&rec.data) {
         Err(NetError::UnsupportedRecordType) if is_any => None,
         result => result.transpose(),
       };
@@ -1260,7 +1248,7 @@ fn format_dns_records<'a>(
           } else {
             None
           },
-          ttl: rec.ttl(),
+          ttl: rec.ttl,
         })
       })
     })
@@ -1284,9 +1272,9 @@ pub fn op_net_get_system_dns_servers(
   let servers = config
     .name_servers()
     .iter()
-    .map(|ns| {
-      let addr = ns.socket_addr;
-      (addr.ip().to_string(), addr.port())
+    .filter_map(|ns| {
+      let port = ns.connections.first()?.port;
+      Some((ns.ip.to_string(), port))
     })
     .collect();
   Ok(servers)
@@ -1337,64 +1325,96 @@ fn format_rdata(
 ) -> impl Fn(&RData) -> Result<Option<DnsRecordData>, NetError> {
   use RecordType::*;
   move |r: &RData| -> Result<Option<DnsRecordData>, NetError> {
+    // Each arm yields `None` when the record's data is a different variant,
+    // matching the old `as_*` accessors.
     let record = match ty {
-      A => r.as_a().map(ToString::to_string).map(DnsRecordData::A),
-      AAAA => r
-        .as_aaaa()
-        .map(ToString::to_string)
-        .map(DnsRecordData::Aaaa),
-      ANAME => r
-        .as_aname()
-        .map(ToString::to_string)
-        .map(DnsRecordData::Aname),
-      CAA => r.as_caa().map(|caa| DnsRecordData::Caa {
-        critical: caa.issuer_critical(),
-        tag: caa.tag().to_string(),
-        value: String::from_utf8_lossy(caa.raw_value()).into_owned(),
-      }),
-      CNAME => r
-        .as_cname()
-        .map(ToString::to_string)
-        .map(DnsRecordData::Cname),
-      MX => r.as_mx().map(|mx| DnsRecordData::Mx {
-        preference: mx.preference(),
-        exchange: mx.exchange().to_string(),
-      }),
-      NAPTR => r.as_naptr().map(|naptr| DnsRecordData::Naptr {
-        order: naptr.order(),
-        preference: naptr.preference(),
-        flags: String::from_utf8_lossy(naptr.flags()).into_owned(),
-        services: String::from_utf8_lossy(naptr.services()).into_owned(),
-        regexp: String::from_utf8_lossy(naptr.regexp()).into_owned(),
-        replacement: naptr.replacement().to_string(),
-      }),
-      NS => r.as_ns().map(ToString::to_string).map(DnsRecordData::Ns),
-      PTR => r.as_ptr().map(ToString::to_string).map(DnsRecordData::Ptr),
-      SOA => r.as_soa().map(|soa| DnsRecordData::Soa {
-        mname: soa.mname().to_string(),
-        rname: soa.rname().to_string(),
-        serial: soa.serial(),
-        refresh: soa.refresh(),
-        retry: soa.retry(),
-        expire: soa.expire(),
-        minimum: soa.minimum(),
-      }),
-      SRV => r.as_srv().map(|srv| DnsRecordData::Srv {
-        priority: srv.priority(),
-        weight: srv.weight(),
-        port: srv.port(),
-        target: srv.target().to_string(),
-      }),
-      TXT => r.as_txt().map(|txt| {
-        let texts: Vec<String> = txt
-          .iter()
-          .map(|bytes| {
-            // Tries to parse these bytes as Latin-1
-            bytes.iter().map(|&b| b as char).collect::<String>()
-          })
-          .collect();
-        DnsRecordData::Txt(texts)
-      }),
+      A => match r {
+        RData::A(a) => Some(DnsRecordData::A(a.0.to_string())),
+        _ => None,
+      },
+      AAAA => match r {
+        RData::AAAA(aaaa) => Some(DnsRecordData::Aaaa(aaaa.0.to_string())),
+        _ => None,
+      },
+      ANAME => match r {
+        RData::ANAME(aname) => Some(DnsRecordData::Aname(aname.0.to_string())),
+        _ => None,
+      },
+      CAA => match r {
+        RData::CAA(caa) => Some(DnsRecordData::Caa {
+          critical: caa.issuer_critical,
+          tag: caa.tag.to_string(),
+          value: String::from_utf8_lossy(&caa.value).into_owned(),
+        }),
+        _ => None,
+      },
+      CNAME => match r {
+        RData::CNAME(cname) => {
+          Some(DnsRecordData::Cname(cname.0.to_string()))
+        }
+        _ => None,
+      },
+      MX => match r {
+        RData::MX(mx) => Some(DnsRecordData::Mx {
+          preference: mx.preference,
+          exchange: mx.exchange.to_string(),
+        }),
+        _ => None,
+      },
+      NAPTR => match r {
+        RData::NAPTR(naptr) => Some(DnsRecordData::Naptr {
+          order: naptr.order,
+          preference: naptr.preference,
+          flags: String::from_utf8_lossy(&naptr.flags).into_owned(),
+          services: String::from_utf8_lossy(&naptr.services).into_owned(),
+          regexp: String::from_utf8_lossy(&naptr.regexp).into_owned(),
+          replacement: naptr.replacement.to_string(),
+        }),
+        _ => None,
+      },
+      NS => match r {
+        RData::NS(ns) => Some(DnsRecordData::Ns(ns.0.to_string())),
+        _ => None,
+      },
+      PTR => match r {
+        RData::PTR(ptr) => Some(DnsRecordData::Ptr(ptr.0.to_string())),
+        _ => None,
+      },
+      SOA => match r {
+        RData::SOA(soa) => Some(DnsRecordData::Soa {
+          mname: soa.mname.to_string(),
+          rname: soa.rname.to_string(),
+          serial: soa.serial,
+          refresh: soa.refresh,
+          retry: soa.retry,
+          expire: soa.expire,
+          minimum: soa.minimum,
+        }),
+        _ => None,
+      },
+      SRV => match r {
+        RData::SRV(srv) => Some(DnsRecordData::Srv {
+          priority: srv.priority,
+          weight: srv.weight,
+          port: srv.port,
+          target: srv.target.to_string(),
+        }),
+        _ => None,
+      },
+      TXT => match r {
+        RData::TXT(txt) => {
+          let texts: Vec<String> = txt
+            .txt_data
+            .iter()
+            .map(|bytes| {
+              // Tries to parse these bytes as Latin-1
+              bytes.iter().map(|&b| b as char).collect::<String>()
+            })
+            .collect();
+          Some(DnsRecordData::Txt(texts))
+        }
+        _ => None,
+      },
       _ => return Err(NetError::UnsupportedRecordType),
     };
     Ok(record)
@@ -1426,7 +1446,7 @@ mod tests {
   use hickory_proto::rr::rdata::naptr::NAPTR;
   use hickory_proto::rr::rdata::srv::SRV;
   use hickory_proto::rr::rdata::txt::TXT;
-  use hickory_proto::rr::record_data::RData;
+  use hickory_proto::rr::RData;
   use hickory_proto::serialize::binary::BinDecoder;
   use hickory_proto::serialize::binary::Restrict;
   use socket2::SockRef;

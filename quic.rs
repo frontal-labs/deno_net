@@ -1445,7 +1445,7 @@ pub(crate) mod webtransport {
     use super::*;
 
     static CERTIFICATE: &[u8] =
-      include_bytes!("../tls/testdata/example1_cert.der");
+      include_bytes!("testdata/example1_cert.der");
 
     fn verify_at(
       timestamp: i64,
