@@ -17,7 +17,7 @@ path = "src/lib.rs"
 
 [dependencies]
 deno_core = "0.412.0"
-deno_error = "=0.7.1"
+deno_error = "=0.7.3"
 deno_features = "0.56.0"
 deno_permissions = "0.118.0"
 deno_signals = "0.50.0"
