@@ -7,9 +7,9 @@ pub mod ops_tls;
 #[cfg(unix)]
 pub mod ops_unix;
 mod quic;
-mod system_conf;
 pub mod raw;
 pub mod resolve_addr;
+mod system_conf;
 pub mod tcp;
 pub mod tunnel;
 #[cfg(windows)]

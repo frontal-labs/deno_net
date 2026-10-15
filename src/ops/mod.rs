@@ -9,6 +9,7 @@ use std::rc::Rc;
 use std::str::FromStr;
 use std::time::Duration;
 
+use crate::system_conf;
 use deno_core::AsyncRefCell;
 use deno_core::ByteString;
 use deno_core::CancelFuture;
@@ -25,16 +26,15 @@ use deno_core::op2;
 use deno_permissions::PermissionsContainer;
 use hickory_proto::op::ResponseCode;
 use hickory_proto::rr::Name;
-use hickory_proto::rr::Record;
 use hickory_proto::rr::RData;
+use hickory_proto::rr::Record;
 use hickory_proto::rr::RecordType;
-use hickory_resolver::net::NetError as HickoryError;
-use hickory_resolver::net::DnsError;
 use hickory_resolver::config::NameServerConfig;
 use hickory_resolver::config::ResolverConfig;
 use hickory_resolver::config::ResolverOpts;
+use hickory_resolver::net::DnsError;
+use hickory_resolver::net::NetError as HickoryError;
 use hickory_resolver::net::runtime::TokioRuntimeProvider;
-use crate::system_conf;
 use quinn::rustls;
 use serde::Deserialize;
 use serde::Serialize;
@@ -1349,9 +1349,7 @@ fn format_rdata(
         _ => None,
       },
       CNAME => match r {
-        RData::CNAME(cname) => {
-          Some(DnsRecordData::Cname(cname.0.to_string()))
-        }
+        RData::CNAME(cname) => Some(DnsRecordData::Cname(cname.0.to_string())),
         _ => None,
       },
       MX => match r {
@@ -1432,6 +1430,7 @@ mod tests {
   use deno_core::RuntimeOptions;
   use deno_core::futures::FutureExt;
   use hickory_proto::rr::Name;
+  use hickory_proto::rr::RData;
   use hickory_proto::rr::rdata::NULL;
   use hickory_proto::rr::rdata::SOA;
   use hickory_proto::rr::rdata::a::A;
@@ -1446,7 +1445,6 @@ mod tests {
   use hickory_proto::rr::rdata::naptr::NAPTR;
   use hickory_proto::rr::rdata::srv::SRV;
   use hickory_proto::rr::rdata::txt::TXT;
-  use hickory_proto::rr::RData;
   use hickory_proto::serialize::binary::BinDecoder;
   use hickory_proto::serialize::binary::Restrict;
   use socket2::SockRef;
