@@ -1,0 +1,41 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  rust:
+    name: Rust (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    env:
+      CARGO_INCREMENTAL: 0
+      RUST_BACKTRACE: full
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        uses: dsherret/rust-toolchain-file@v1
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+      - name: Check formatting
+        if: matrix.os == 'ubuntu-latest'
+        run: cargo fmt --all -- --check
+      - name: Run Clippy
+        if: matrix.os == 'ubuntu-latest'
+        run: cargo clippy --all-targets --all-features -- -D clippy::all
+      - name: Build
+        run: cargo check --all-targets --all-features
+      - name: Test
+        run: cargo test --all-targets --all-features
