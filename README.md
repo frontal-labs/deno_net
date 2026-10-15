@@ -127,3 +127,7 @@ Following ops are provided, which can be accessed through `Deno.ops`:
 - op_set_nodelay
 - op_set_keepalive
 - op_node_unstable_net_listen_unixpacket
+
+## Development
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for repository checks and pull request guidance.
