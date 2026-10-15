@@ -36,7 +36,7 @@ socket2 = { version = "0.5.3", features = ["all"] }
 thiserror = "2.0.12"
 tokio = { version = "1.47.1", features = ["full"] }
 url = { version = "2.5", features = ["serde", "expose_internals"] }
-web-transport-proto = "0.2.7"
+web-transport-proto = "0.6.2"
 x509-parser = "0.15.0"
 resolv-conf = { version = "0.7.0", features = ["system"] }
 
