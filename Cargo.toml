@@ -13,7 +13,7 @@ repository = "https://github.com/frontal-labs/deno_net"
 description = "Networking for Deno (Frontal Labs fork)"
 
 [lib]
-path = "lib.rs"
+path = "src/lib.rs"
 
 [dependencies]
 deno_core = "0.412.0"
