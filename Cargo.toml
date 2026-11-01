@@ -16,7 +16,7 @@ description = "Networking for Deno (Frontal Labs fork)"
 path = "src/lib.rs"
 
 [dependencies]
-deno_core = "0.412.0"
+deno_core = "0.413.0"
 deno_error = "=0.7.1"
 deno_features = "0.56.0"
 deno_permissions = "0.118.0"
